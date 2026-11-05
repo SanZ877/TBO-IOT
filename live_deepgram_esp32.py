@@ -28,6 +28,9 @@ async def main():
 
     try:
         ser = serial.Serial(COM_PORT, BAUD_RATE, timeout=0.1)
+        ser.dtr = False
+        ser.rts = False
+
         ser.reset_input_buffer()
         print(f"Membuka port {COM_PORT} pada {BAUD_RATE} baud...")
     except Exception as e:
