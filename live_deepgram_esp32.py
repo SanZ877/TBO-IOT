@@ -1,14 +1,14 @@
 import asyncio
 import json
-import serial
+import socket
 import websockets
 
 API_KEY = "6583050a882fe03f3a885048cef955c6c3069f68"
-COM_PORT = "COM3"
-BAUD_RATE = 921600
+UDP_IP = "0.0.0.0"  # Mendengarkan dari semua perangkat di jaringan lokal
+UDP_PORT = 8888
 
-# 800 sampel x 2 byte (16-bit PCM) = 1600 byte per paket (50ms audio)
-CHUNK_SIZE = 1600  
+# 800 sampel x 2 byte (16-bit PCM) = 1600 byte per paket (50ms audio - SAMA PERSIS)
+CHUNK_SIZE = 1600
 
 
 async def main():
@@ -26,22 +26,19 @@ async def main():
 
     headers = {"Authorization": f"Token {API_KEY}"}
 
+    # Buka Socket UDP
     try:
-        ser = serial.Serial(COM_PORT, BAUD_RATE, timeout=0.1)
-        ser.dtr = False
-        ser.rts = False
-
-        ser.reset_input_buffer()
-        print(f"Membuka port {COM_PORT} pada {BAUD_RATE} baud...")
+        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        sock.bind((UDP_IP, UDP_PORT))
+        sock.setblocking(False)
+        print(f"UDP Receiver aktif di Port {UDP_PORT}...")
     except Exception as e:
-        print(
-            f"Gagal membuka {COM_PORT}! Pastikan Serial Monitor DITUTUP. Error: {e}"
-        )
+        print(f"Gagal membuka Port {UDP_PORT}! Error: {e}")
         return
 
     async with websockets.connect(url, additional_headers=headers) as ws:
         print("Connected Deepgram")
-        print("\nDEEPGRAM LIVE STT (ESP32 INMP441 USB)")
+        print("\nDEEPGRAM LIVE STT (ESP32 INMP441 UDP Wi-Fi)")
         print("Bahasa: Indonesia")
         print("Bicara sekarang...")
         print("Ctrl+C untuk berhenti.\n")
@@ -49,28 +46,28 @@ async def main():
         audio_queue = asyncio.Queue()
         loop = asyncio.get_running_loop()
 
-        # Task 1: Membaca USB Serial dan memotong tepat 1600 byte (50ms)
-        def read_serial_worker():
+        # Task 1: Membaca UDP Socket & memotong tepat 1600 byte (50ms)
+        async def read_udp_worker():
             buffer = bytearray()
             while True:
-                data = ser.read(1024)
-                if data:
-                    buffer.extend(data)
-                    while len(buffer) >= CHUNK_SIZE:
-                        chunk = bytes(buffer[:CHUNK_SIZE])
-                        del buffer[:CHUNK_SIZE]
-                        loop.call_soon_threadsafe(audio_queue.put_nowait, chunk)
+                try:
+                    data, _ = await loop.sock_recvfrom(sock, 2048)
+                    if data:
+                        buffer.extend(data)
+                        while len(buffer) >= CHUNK_SIZE:
+                            chunk = bytes(buffer[:CHUNK_SIZE])
+                            del buffer[:CHUNK_SIZE]
+                            await audio_queue.put(chunk)
+                except Exception:
+                    await asyncio.sleep(0.001)
 
-        # Jalankan pembacaan serial di thread terpisah agar aliran konsisten
-        loop.run_in_executor(None, read_serial_worker)
-
-        # Task 2: Mengirimkan audio dari Queue ke Deepgram
+        # Task 2: Mengirimkan audio dari Queue ke Deepgram (SAMA PERSIS)
         async def send_audio():
             while True:
                 data = await audio_queue.get()
                 await ws.send(data)
 
-        # Task 3: Menerima hasil transkripsi
+        # Task 3: Menerima hasil transkripsi (SAMA PERSIS)
         async def receive_transcript():
             async for message in ws:
                 data = json.loads(message)
@@ -92,13 +89,14 @@ async def main():
                 else:
                     print(f"\r[PARTIAL] {text:<100}", end="", flush=True)
 
-        # Task 4: KeepAlive
+        # Task 4: KeepAlive (SAMA PERSIS)
         async def keep_alive():
             while True:
                 await asyncio.sleep(5)
                 await ws.send(json.dumps({"type": "KeepAlive"}))
 
         await asyncio.gather(
+            read_udp_worker(),
             send_audio(),
             receive_transcript(),
             keep_alive(),
